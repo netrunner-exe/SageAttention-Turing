@@ -127,6 +127,12 @@ def sageattn(
     spec = AttentionSpec.from_tensors(q, k, v, tensor_layout, is_causal, return_lse, arch)
     backend = select_backend(spec)
 
+    # SM75 short or cross-attention sequences: plain torch SDPA is faster than the INT8 path
+    if backend == "torch_sdpa":
+        from .backends import sm75_short
+        result = sm75_short.torch_sdpa_fallback(q, k, v, is_causal, sm_scale, tensor_layout)
+        return result.to(orig_dtype)
+
     # SM75 short path (via backends/sm75_short.py: v2 -> v1 -> torch sdpa fallback)
     if backend == "sm75_short":
         from .backends import sm75_short

@@ -1,8 +1,22 @@
 """
 Dispatch logic for attention backends
 """
+import os
 from functools import lru_cache
 from .specs import AttentionSpec
+
+_DEFAULT_SM75_MIN_SAGE_LEN = 1024
+
+
+def _read_sm75_min_sage_len():
+    try:
+        return int(os.environ.get("SAGEATTN_SM75_MIN_LEN", _DEFAULT_SM75_MIN_SAGE_LEN))
+    except ValueError:
+        return _DEFAULT_SM75_MIN_SAGE_LEN
+
+
+# On sm75 the INT8 path loses to torch SDPA when either sequence is shorter than this
+SM75_MIN_SAGE_LEN = _read_sm75_min_sage_len()
 
 
 @lru_cache(maxsize=256)
@@ -14,10 +28,12 @@ def select_backend(spec: AttentionSpec):
     """
     if spec.arch != "sm75":
         return "torch_sdpa_or_other_backend"
-    
-    route_len = max(spec.q_len, spec.kv_len)
-    
-    if route_len < 1024 and not spec.return_lse:
-        return "sm75_short"
-    
+
+    # torch SDPA cannot return LSE, so this case always stays on the INT8 path
+    if spec.return_lse:
+        return "sm75_qattn_long"
+
+    if min(spec.q_len, spec.kv_len) < SM75_MIN_SAGE_LEN:
+        return "torch_sdpa"
+
     return "sm75_qattn_long"
